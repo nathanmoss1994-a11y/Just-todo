@@ -1,10 +1,6 @@
-const CACHE = 'just-todo-v1';
-const ASSETS = ['/', 'index.html', 'manifest.json', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
+const CACHE = 'just-todo-v2';
 
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
-  self.skipWaiting();
-});
+self.addEventListener('install', e => { self.skipWaiting(); });
 
 self.addEventListener('activate', e => {
   e.waitUntil(
@@ -13,8 +9,9 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
-// Network-first for the page (so updates arrive), cache fallback for offline
+// Network-first so updates arrive immediately; cache fallback for offline
 self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
   e.respondWith(
     fetch(e.request)
       .then(res => {
