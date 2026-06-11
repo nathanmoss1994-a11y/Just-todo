@@ -99,6 +99,7 @@ textarea.field{resize:vertical;min-height:72px}
   <header>
     <h1 id="day"></h1>
     <p class="sub" id="sub"></p>
+    <p class="sub" id="pushStatus" style="margin-top:2px;color:var(--faint)"></p>
     <button class="bell" id="bell" aria-label="Notifications">🔕</button>
   </header>
   <input class="search" id="search" placeholder="Search tasks">
@@ -146,7 +147,7 @@ textarea.field{resize:vertical;min-height:72px}
 <script>
 /* ================= CONFIG ================= */
 /* Paste your OneSignal App ID between the quotes below to enable push */
-const ONESIGNAL_APP_ID = "15f81ae4-9a61-458e-b726-c0125994c0f9";
+const ONESIGNAL_APP_ID = "";
 /* ========================================== */
 
 const KEY='just-todo-v2';
@@ -192,21 +193,29 @@ const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"
 
 /* ---- push (OneSignal) ---- */
 const PUSH=!!ONESIGNAL_APP_ID;
+function setPushStatus(s){const el=document.getElementById('pushStatus');if(el)el.textContent=s?'Push: '+s:''}
+window.addEventListener('error',e=>{setPushStatus('script error — '+(e.message||'unknown'))});
 if(PUSH){
+  setPushStatus('loading…');
   const s=document.createElement('script');
   s.src='https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';s.defer=true;
+  s.onerror=()=>setPushStatus('SDK failed to load — check internet/blockers');
   document.head.appendChild(s);
   window.OneSignalDeferred=window.OneSignalDeferred||[];
   OneSignalDeferred.push(async OneSignal=>{
-    await OneSignal.init({appId:ONESIGNAL_APP_ID,serviceWorkerPath:'OneSignalSDKWorker.js'});
-    /* If permission was granted before push existed (v1), register the device now */
     try{
+      await OneSignal.init({appId:ONESIGNAL_APP_ID,serviceWorkerPath:'OneSignalSDKWorker.js'});
+      setPushStatus('ready — tap the bell to connect');
+      /* If permission was granted before push existed (v1), register the device now */
       if(('Notification'in window)&&Notification.permission==='granted'){
         await OneSignal.User.PushSubscription.optIn();
       }
-    }catch(e){}
+      setTimeout(()=>{
+        try{const id=OneSignal.User.PushSubscription.id;if(id)setPushStatus('connected ✓')}catch(e){}
+      },2000);
+    }catch(e){setPushStatus('init error — '+(e.message||e))}
   });
-}else if('serviceWorker'in navigator){navigator.serviceWorker.register('sw.js')}
+}else if('serviceWorker'in navigator){navigator.serviceWorker.register('sw.js');setPushStatus('')}
 
 async function schedulePush(task){
   if(!PUSH||!task.due||!task.dueTime)return;
@@ -478,7 +487,8 @@ function toast(msg,undo){
 document.getElementById('bell').onclick=async()=>{
   if(!('Notification'in window)){toast('Install the app to your home screen first for notifications');return}
   if(PUSH){
-    if(!window.OneSignalDeferred){toast('Push service didn\'t load — check the App ID line in index.html');return}
+    if(!window.OneSignalDeferred){setPushStatus('not loaded — App ID line problem');toast('Push service didn\'t load');return}
+    setPushStatus('connecting…');
     let responded=false;
     OneSignalDeferred.push(async OneSignal=>{
       responded=true;
@@ -487,13 +497,14 @@ document.getElementById('bell').onclick=async()=>{
         await OneSignal.User.PushSubscription.optIn();
         /* give the SDK a moment to register, then report honestly */
         setTimeout(()=>{
-          const id=OneSignal.User.PushSubscription.id;
+          let id=null;try{id=OneSignal.User.PushSubscription.id}catch(e){}
+          setPushStatus(id?'connected ✓':'permission set — close and reopen the app');
           toast(id?'Push connected ✓':'Permission set — reopen the app to finish connecting');
           render();
         },1500);
-      }catch(e){toast('Push setup hit an error — try again');}
+      }catch(e){setPushStatus('error — '+(e.message||e));toast('Push setup hit an error')}
     });
-    setTimeout(()=>{if(!responded)toast('Push service didn\'t load — check your connection and App ID')},3500);
+    setTimeout(()=>{if(!responded){setPushStatus('SDK never responded — likely blocked or App ID wrong');toast('Push service didn\'t load')}},3500);
     return;
   }
   if(Notification.permission==='granted'){toast('Notifications are on');return}
