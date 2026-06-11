@@ -204,18 +204,32 @@ if(PUSH){
   window.OneSignalDeferred=window.OneSignalDeferred||[];
   OneSignalDeferred.push(async OneSignal=>{
     try{
+      /* Evict the old v1 service worker so OneSignal's worker can take over */
+      if('serviceWorker'in navigator){
+        try{
+          const regs=await navigator.serviceWorker.getRegistrations();
+          for(const r of regs){
+            const u=((r.active||r.waiting||r.installing)||{}).scriptURL||'';
+            if(u&&!u.includes('OneSignal')){await r.unregister()}
+          }
+        }catch(e){}
+      }
       await OneSignal.init({appId:ONESIGNAL_APP_ID,serviceWorkerPath:'OneSignalSDKWorker.js'});
       setPushStatus('ready — tap the bell to connect');
       /* If permission was granted before push existed (v1), register the device now */
       if(('Notification'in window)&&Notification.permission==='granted'){
-        await OneSignal.User.PushSubscription.optIn();
+        await withTimeout(OneSignal.User.PushSubscription.optIn(),8000);
       }
       setTimeout(()=>{
         try{const id=OneSignal.User.PushSubscription.id;if(id)setPushStatus('connected ✓')}catch(e){}
       },2000);
-    }catch(e){setPushStatus('init error — '+(e.message||e))}
+    }catch(e){setPushStatus(e&&e.message==='timeout'?'worker swapped — close and reopen the app':'init error — '+((e&&e.message)||e))}
   });
 }else if('serviceWorker'in navigator){navigator.serviceWorker.register('sw.js');setPushStatus('')}
+
+function withTimeout(p,ms){
+  return Promise.race([p,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]);
+}
 
 async function schedulePush(task){
   if(!PUSH||!task.due||!task.dueTime)return;
@@ -493,8 +507,8 @@ document.getElementById('bell').onclick=async()=>{
     OneSignalDeferred.push(async OneSignal=>{
       responded=true;
       try{
-        await OneSignal.Notifications.requestPermission();
-        await OneSignal.User.PushSubscription.optIn();
+        await withTimeout(OneSignal.Notifications.requestPermission(),8000);
+        await withTimeout(OneSignal.User.PushSubscription.optIn(),8000);
         /* give the SDK a moment to register, then report honestly */
         setTimeout(()=>{
           let id=null;try{id=OneSignal.User.PushSubscription.id}catch(e){}
@@ -502,7 +516,10 @@ document.getElementById('bell').onclick=async()=>{
           toast(id?'Push connected ✓':'Permission set — reopen the app to finish connecting');
           render();
         },1500);
-      }catch(e){setPushStatus('error — '+(e.message||e));toast('Push setup hit an error')}
+      }catch(e){
+        const msg=e&&e.message==='timeout'?'timed out — fully close the app and reopen, then tap the bell again':'error — '+((e&&e.message)||e);
+        setPushStatus(msg);toast('Push: '+msg);
+      }
     });
     setTimeout(()=>{if(!responded){setPushStatus('SDK never responded — likely blocked or App ID wrong');toast('Push service didn\'t load')}},3500);
     return;
