@@ -199,6 +199,12 @@ if(PUSH){
   window.OneSignalDeferred=window.OneSignalDeferred||[];
   OneSignalDeferred.push(async OneSignal=>{
     await OneSignal.init({appId:ONESIGNAL_APP_ID,serviceWorkerPath:'OneSignalSDKWorker.js'});
+    /* If permission was granted before push existed (v1), register the device now */
+    try{
+      if(('Notification'in window)&&Notification.permission==='granted'){
+        await OneSignal.User.PushSubscription.optIn();
+      }
+    }catch(e){}
   });
 }else if('serviceWorker'in navigator){navigator.serviceWorker.register('sw.js')}
 
@@ -471,12 +477,27 @@ function toast(msg,undo){
 /* ---- local daily summary ---- */
 document.getElementById('bell').onclick=async()=>{
   if(!('Notification'in window)){toast('Install the app to your home screen first for notifications');return}
-  if(Notification.permission==='granted'){toast('Notifications are on');return}
-  let p;
-  if(PUSH&&window.OneSignalDeferred){
-    OneSignalDeferred.push(async OneSignal=>{await OneSignal.Notifications.requestPermission();render()});return;
+  if(PUSH){
+    if(!window.OneSignalDeferred){toast('Push service didn\'t load — check the App ID line in index.html');return}
+    let responded=false;
+    OneSignalDeferred.push(async OneSignal=>{
+      responded=true;
+      try{
+        await OneSignal.Notifications.requestPermission();
+        await OneSignal.User.PushSubscription.optIn();
+        /* give the SDK a moment to register, then report honestly */
+        setTimeout(()=>{
+          const id=OneSignal.User.PushSubscription.id;
+          toast(id?'Push connected ✓':'Permission set — reopen the app to finish connecting');
+          render();
+        },1500);
+      }catch(e){toast('Push setup hit an error — try again');}
+    });
+    setTimeout(()=>{if(!responded)toast('Push service didn\'t load — check your connection and App ID')},3500);
+    return;
   }
-  p=await Notification.requestPermission();
+  if(Notification.permission==='granted'){toast('Notifications are on');return}
+  const p=await Notification.requestPermission();
   if(p==='granted'){toast('Notifications on');notifyDue(true)}
   else toast('Notifications blocked — enable in phone settings');
   render();
